@@ -1,0 +1,1235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="HeliIMS" />
+  <meta name="theme-color" content="#0a1628" />
+  <link rel="manifest" href="manifest.json" />
+  <title>HeliIMS — Helicopter Inventory Management</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@300;400;500&display=swap" rel="stylesheet" />
+
+  <!-- Firebase -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+    import { getFirestore, collection, doc, addDoc, setDoc, getDoc, getDocs,
+             updateDoc, deleteDoc, query, where, orderBy, serverTimestamp, onSnapshot }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    // ─── FIREBASE CONFIG ─────────────────────────────────────────────────────────
+    const firebaseConfig = {
+      apiKey: "AIzaSyBk58fE5kngjq3oS7ApVb-Bfrb0A5IQRUI",
+      authDomain: "gso-takip-e106d.firebaseapp.com",
+      projectId: "gso-takip-e106d",
+      storageBucket: "gso-takip-e106d.firebasestorage.app",
+      messagingSenderId: "339280657022",
+      appId: "1:339280657022:web:23f86bbc2216cddfcef62f",
+      measurementId: "G-KT6F44L2GM"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    // ─── STATE ────────────────────────────────────────────────────────────────────
+    let currentUser = null;
+    let helicopters = [];
+    let equipment = [];
+    let currentView = "dashboard";
+    let editingId = null;
+    let filterBase = "all";
+    let filterType = "all";
+    let filterStatus = "all";
+
+    const BASES = ["Ankara-HQ", "İzmir", "İstanbul", "Antalya", "Adana", "Diyarbakır", "Van"];
+    const HELI_TYPES = ["Sikorsky S70-A", "Sikorsky S70-I", "Sikorsky S70-T", "Bell-429", "Atak-129", "Gökbey"];
+    const EQUIP_CATEGORIES = ["Video Management", "Counter Measure", "Rescue", "Firefighting"];
+    const HELI_STATUSES = ["Active", "Maintenance", "Repair", "Grounded"];
+    const EQUIP_STATUSES = ["Installed", "Inventory", "Repair", "Retired"];
+
+    // ─── AUTH ─────────────────────────────────────────────────────────────────────
+    onAuthStateChanged(auth, user => {
+      currentUser = user;
+      if (user) {
+        document.getElementById("login-screen").style.display = "none";
+        document.getElementById("app-screen").style.display = "flex";
+        document.getElementById("user-email").textContent = user.email;
+        loadData();
+      } else {
+        document.getElementById("login-screen").style.display = "flex";
+        document.getElementById("app-screen").style.display = "none";
+      }
+    });
+
+    window.doLogin = async () => {
+      const email = document.getElementById("login-email").value.trim();
+      const pass = document.getElementById("login-pass").value;
+      const errEl = document.getElementById("login-error");
+      const btn = document.getElementById("login-btn");
+      errEl.textContent = "";
+      btn.disabled = true;
+      btn.textContent = "AUTHENTICATING...";
+      try {
+        await signInWithEmailAndPassword(auth, email, pass);
+      } catch (e) {
+        errEl.textContent = e.message.replace("Firebase: ", "").replace(/\(.*\)/, "").trim();
+        btn.disabled = false;
+        btn.textContent = "LOGIN";
+      }
+    };
+
+    window.doLogout = async () => {
+      await signOut(auth);
+    };
+
+    // ─── DATA LOADING ─────────────────────────────────────────────────────────────
+    async function loadData() {
+      // Real-time listeners
+      onSnapshot(collection(db, "helicopters"), snap => {
+        helicopters = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderView();
+      });
+      onSnapshot(collection(db, "equipment"), snap => {
+        equipment = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderView();
+      });
+    }
+
+    // ─── NAVIGATION ───────────────────────────────────────────────────────────────
+    window.navigate = (view) => {
+      currentView = view;
+      editingId = null;
+      filterBase = "all"; filterType = "all"; filterStatus = "all";
+      document.querySelectorAll(".nav-item").forEach(el => el.classList.remove("active"));
+      const navEl = document.querySelector(`.nav-item[data-view="${view}"]`);
+      if (navEl) navEl.classList.add("active");
+      renderView();
+    };
+
+    function renderView() {
+      const main = document.getElementById("main-content");
+      switch (currentView) {
+        case "dashboard": main.innerHTML = renderDashboard(); break;
+        case "helicopters": main.innerHTML = renderHelicopters(); break;
+        case "equipment": main.innerHTML = renderEquipment(); break;
+        case "bases": main.innerHTML = renderBases(); break;
+        case "transfers": main.innerHTML = renderTransfers(); break;
+      }
+    }
+
+    // ─── DASHBOARD ────────────────────────────────────────────────────────────────
+    function renderDashboard() {
+      const totalHelis = helicopters.length;
+      const activeHelis = helicopters.filter(h => h.status === "Active").length;
+      const repairHelis = helicopters.filter(h => h.status === "Repair" || h.status === "Maintenance").length;
+      const totalEquip = equipment.length;
+      const installedEquip = equipment.filter(e => e.status === "Installed").length;
+      const inventoryEquip = equipment.filter(e => e.status === "Inventory").length;
+      const repairEquip = equipment.filter(e => e.status === "Repair").length;
+
+      const baseStats = BASES.map(b => ({
+        name: b,
+        helis: helicopters.filter(h => h.base === b).length,
+        equip: equipment.filter(e => e.base === b).length
+      }));
+
+      const recentActivity = [...helicopters, ...equipment]
+        .filter(i => i.updatedAt)
+        .sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0))
+        .slice(0, 5);
+
+      return `
+        <div class="page-header">
+          <div class="page-title">OPERATIONS OVERVIEW</div>
+          <div class="page-sub">HeliIMS Command Dashboard</div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card accent-green">
+            <div class="stat-icon">🚁</div>
+            <div class="stat-num">${totalHelis}</div>
+            <div class="stat-label">Total Helicopters</div>
+            <div class="stat-sub">${activeHelis} active · ${repairHelis} in service</div>
+          </div>
+          <div class="stat-card accent-blue">
+            <div class="stat-icon">⚙️</div>
+            <div class="stat-num">${totalEquip}</div>
+            <div class="stat-label">Total Equipment</div>
+            <div class="stat-sub">${installedEquip} installed · ${inventoryEquip} in stock</div>
+          </div>
+          <div class="stat-card accent-amber">
+            <div class="stat-icon">🔧</div>
+            <div class="stat-num">${repairEquip + repairHelis}</div>
+            <div class="stat-label">Under Repair</div>
+            <div class="stat-sub">${repairHelis} helis · ${repairEquip} equipment</div>
+          </div>
+          <div class="stat-card accent-red">
+            <div class="stat-icon">📍</div>
+            <div class="stat-num">${BASES.length}</div>
+            <div class="stat-label">Active Bases</div>
+            <div class="stat-sub">1 HQ · ${BASES.length - 1} field bases</div>
+          </div>
+        </div>
+
+        <div class="two-col">
+          <div class="card">
+            <div class="card-title">BASE DEPLOYMENT</div>
+            <div class="base-bars">
+              ${baseStats.map(b => `
+                <div class="base-bar-row">
+                  <div class="base-bar-label ${b.name === "Ankara-HQ" ? "hq" : ""}">${b.name}</div>
+                  <div class="base-bar-track">
+                    <div class="base-bar-fill" style="width:${totalHelis ? Math.round(b.helis/Math.max(totalHelis,1)*100) : 0}%"></div>
+                  </div>
+                  <div class="base-bar-nums">${b.helis}H · ${b.equip}E</div>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">FLEET BREAKDOWN</div>
+            ${HELI_TYPES.map(t => {
+              const count = helicopters.filter(h => h.type === t).length;
+              const active = helicopters.filter(h => h.type === t && h.status === "Active").length;
+              if (count === 0) return `<div class="fleet-row muted"><span>${t}</span><span>—</span></div>`;
+              return `<div class="fleet-row"><span>${t}</span><span class="fleet-badges"><span class="badge green">${active} active</span><span class="badge gray">${count} total</span></span></div>`;
+            }).join("")}
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">EQUIPMENT CATEGORIES</div>
+          <div class="equip-cat-grid">
+            ${EQUIP_CATEGORIES.map(cat => {
+              const items = equipment.filter(e => e.category === cat);
+              const installed = items.filter(e => e.status === "Installed").length;
+              const inv = items.filter(e => e.status === "Inventory").length;
+              const rep = items.filter(e => e.status === "Repair").length;
+              return `
+                <div class="equip-cat-card">
+                  <div class="equip-cat-icon">${catIcon(cat)}</div>
+                  <div class="equip-cat-name">${cat}</div>
+                  <div class="equip-cat-stats">
+                    <span class="badge green">${installed} inst.</span>
+                    <span class="badge blue">${inv} stock</span>
+                    <span class="badge amber">${rep} repair</span>
+                  </div>
+                </div>`;
+            }).join("")}
+          </div>
+        </div>`;
+    }
+
+    function catIcon(cat) {
+      return { "Video Management": "📹", "Counter Measure": "🎯", "Rescue": "🔴", "Firefighting": "🔥" }[cat] || "⚙️";
+    }
+
+    // ─── HELICOPTERS ──────────────────────────────────────────────────────────────
+    function renderHelicopters() {
+      let filtered = helicopters;
+      if (filterBase !== "all") filtered = filtered.filter(h => h.base === filterBase);
+      if (filterType !== "all") filtered = filtered.filter(h => h.type === filterType);
+      if (filterStatus !== "all") filtered = filtered.filter(h => h.status === filterStatus);
+
+      return `
+        <div class="page-header">
+          <div class="page-title">HELICOPTER FLEET</div>
+          <button class="btn-primary" onclick="openHeliForm()">+ ADD HELICOPTER</button>
+        </div>
+        <div class="filters">
+          <select onchange="setFilter('base',this.value,'helicopters')">
+            <option value="all">All Bases</option>
+            ${BASES.map(b => `<option value="${b}" ${filterBase===b?"selected":""}>${b}</option>`).join("")}
+          </select>
+          <select onchange="setFilter('type',this.value,'helicopters')">
+            <option value="all">All Types</option>
+            ${HELI_TYPES.map(t => `<option value="${t}" ${filterType===t?"selected":""}>${t}</option>`).join("")}
+          </select>
+          <select onchange="setFilter('status',this.value,'helicopters')">
+            <option value="all">All Status</option>
+            ${HELI_STATUSES.map(s => `<option value="${s}" ${filterStatus===s?"selected":""}>${s}</option>`).join("")}
+          </select>
+        </div>
+        <div class="count-bar">${filtered.length} helicopter${filtered.length!==1?"s":""} found</div>
+        <div class="item-grid">
+          ${filtered.length === 0 ? '<div class="empty-state">No helicopters found.<br>Add one to get started.</div>' :
+            filtered.map(h => renderHeliCard(h)).join("")}
+        </div>`;
+    }
+
+    function renderHeliCard(h) {
+      const heliEquip = equipment.filter(e => e.assignedTo === h.id);
+      const statusClass = { Active: "green", Maintenance: "amber", Repair: "red", Grounded: "gray" }[h.status] || "gray";
+      return `
+        <div class="item-card">
+          <div class="item-card-top">
+            <div class="item-card-icon">🚁</div>
+            <div class="item-card-info">
+              <div class="item-card-title">${h.tailNumber || "N/A"}</div>
+              <div class="item-card-sub">${h.type}</div>
+            </div>
+            <span class="badge ${statusClass}">${h.status}</span>
+          </div>
+          <div class="item-card-meta">
+            <div class="meta-row"><span class="meta-label">📍 Base</span><span>${h.base}</span></div>
+            <div class="meta-row"><span class="meta-label">🛡️ Mission</span><span>${h.mission || "—"}</span></div>
+            <div class="meta-row"><span class="meta-label">⚙️ Equipment</span><span>${heliEquip.length} installed</span></div>
+            ${h.notes ? `<div class="meta-row notes"><span>${h.notes}</span></div>` : ""}
+          </div>
+          <div class="item-card-equip-list">
+            ${heliEquip.slice(0,3).map(e => `<span class="equip-pill">${e.name}</span>`).join("")}
+            ${heliEquip.length > 3 ? `<span class="equip-pill more">+${heliEquip.length-3} more</span>` : ""}
+          </div>
+          <div class="item-card-actions">
+            <button class="btn-sm" onclick="openHeliForm('${h.id}')">✏️ Edit</button>
+            <button class="btn-sm" onclick="openTransferForm('heli','${h.id}')">📍 Transfer</button>
+            <button class="btn-sm danger" onclick="deleteItem('helicopters','${h.id}','${h.tailNumber}')">🗑️ Delete</button>
+          </div>
+        </div>`;
+    }
+
+    // ─── EQUIPMENT ────────────────────────────────────────────────────────────────
+    function renderEquipment() {
+      let filtered = equipment;
+      if (filterBase !== "all") filtered = filtered.filter(e => e.base === filterBase);
+      if (filterType !== "all") filtered = filtered.filter(e => e.category === filterType);
+      if (filterStatus !== "all") filtered = filtered.filter(e => e.status === filterStatus);
+
+      return `
+        <div class="page-header">
+          <div class="page-title">EQUIPMENT INVENTORY</div>
+          <button class="btn-primary" onclick="openEquipForm()">+ ADD EQUIPMENT</button>
+        </div>
+        <div class="filters">
+          <select onchange="setFilter('base',this.value,'equipment')">
+            <option value="all">All Bases</option>
+            ${BASES.map(b => `<option value="${b}" ${filterBase===b?"selected":""}>${b}</option>`).join("")}
+          </select>
+          <select onchange="setFilter('type',this.value,'equipment')">
+            <option value="all">All Categories</option>
+            ${EQUIP_CATEGORIES.map(c => `<option value="${c}" ${filterType===c?"selected":""}>${c}</option>`).join("")}
+          </select>
+          <select onchange="setFilter('status',this.value,'equipment')">
+            <option value="all">All Status</option>
+            ${EQUIP_STATUSES.map(s => `<option value="${s}" ${filterStatus===s?"selected":""}>${s}</option>`).join("")}
+          </select>
+        </div>
+        <div class="count-bar">${filtered.length} item${filtered.length!==1?"s":""} found</div>
+        <div class="item-grid">
+          ${filtered.length === 0 ? '<div class="empty-state">No equipment found.<br>Add items to your inventory.</div>' :
+            filtered.map(e => renderEquipCard(e)).join("")}
+        </div>`;
+    }
+
+    function renderEquipCard(e) {
+      const assignedHeli = e.assignedTo ? helicopters.find(h => h.id === e.assignedTo) : null;
+      const statusClass = { Installed: "green", Inventory: "blue", Repair: "amber", Retired: "gray" }[e.status] || "gray";
+      return `
+        <div class="item-card">
+          <div class="item-card-top">
+            <div class="item-card-icon">${catIcon(e.category)}</div>
+            <div class="item-card-info">
+              <div class="item-card-title">${e.name}</div>
+              <div class="item-card-sub">${e.category} · ${e.serialNumber || "No S/N"}</div>
+            </div>
+            <span class="badge ${statusClass}">${e.status}</span>
+          </div>
+          <div class="item-card-meta">
+            <div class="meta-row"><span class="meta-label">📍 Base</span><span>${e.base}</span></div>
+            <div class="meta-row"><span class="meta-label">🚁 Aircraft</span><span>${assignedHeli ? assignedHeli.tailNumber : "Not installed"}</span></div>
+            <div class="meta-row"><span class="meta-label">🏷️ Part No.</span><span>${e.partNumber || "—"}</span></div>
+            ${e.notes ? `<div class="meta-row notes"><span>${e.notes}</span></div>` : ""}
+          </div>
+          <div class="item-card-actions">
+            <button class="btn-sm" onclick="openEquipForm('${e.id}')">✏️ Edit</button>
+            <button class="btn-sm" onclick="openInstallForm('${e.id}')">🔧 ${e.status==='Installed'?'Uninstall':'Install'}</button>
+            <button class="btn-sm danger" onclick="deleteItem('equipment','${e.id}','${e.name}')">🗑️ Delete</button>
+          </div>
+        </div>`;
+    }
+
+    // ─── BASES VIEW ───────────────────────────────────────────────────────────────
+    function renderBases() {
+      return `
+        <div class="page-header">
+          <div class="page-title">BASE OVERVIEW</div>
+        </div>
+        <div class="bases-grid">
+          ${BASES.map(b => {
+            const baseHelis = helicopters.filter(h => h.base === b);
+            const baseEquip = equipment.filter(e => e.base === b);
+            const active = baseHelis.filter(h => h.status === "Active").length;
+            const isHQ = b === "Ankara-HQ";
+            return `
+              <div class="base-card ${isHQ ? "hq-card" : ""}">
+                <div class="base-card-header">
+                  <div class="base-card-name">${isHQ ? "⭐ " : ""}${b}</div>
+                  ${isHQ ? '<div class="hq-badge">HEADQUARTERS</div>' : ""}
+                </div>
+                <div class="base-stats-row">
+                  <div class="base-stat"><div class="base-stat-num">${baseHelis.length}</div><div class="base-stat-lbl">Helicopters</div></div>
+                  <div class="base-stat"><div class="base-stat-num green-num">${active}</div><div class="base-stat-lbl">Active</div></div>
+                  <div class="base-stat"><div class="base-stat-num">${baseEquip.length}</div><div class="base-stat-lbl">Equipment</div></div>
+                </div>
+                <div class="base-heli-list">
+                  ${baseHelis.length === 0 ? '<div class="muted-sm">No helicopters assigned</div>' :
+                    baseHelis.map(h => `
+                      <div class="base-heli-row">
+                        <span>🚁 ${h.tailNumber} <span class="muted-sm">${h.type}</span></span>
+                        <span class="badge ${h.status==="Active"?"green":h.status==="Repair"?"red":"amber"} sm">${h.status}</span>
+                      </div>`).join("")}
+                </div>
+              </div>`;
+          }).join("")}
+        </div>`;
+    }
+
+    // ─── TRANSFERS LOG ────────────────────────────────────────────────────────────
+    function renderTransfers() {
+      const allItems = [
+        ...helicopters.map(h => ({ ...h, kind: "Helicopter", label: h.tailNumber + " · " + h.type })),
+        ...equipment.map(e => ({ ...e, kind: "Equipment", label: e.name + " · " + e.serialNumber }))
+      ].filter(i => i.history && i.history.length > 0);
+
+      const events = [];
+      allItems.forEach(item => {
+        (item.history || []).forEach(ev => events.push({ ...ev, itemLabel: item.label, kind: item.kind }));
+      });
+      events.sort((a, b) => (b.at?.seconds || 0) - (a.at?.seconds || 0));
+
+      return `
+        <div class="page-header">
+          <div class="page-title">MOVEMENT LOG</div>
+        </div>
+        <div class="card">
+          ${events.length === 0 ? '<div class="empty-state">No movement history yet.</div>' :
+            events.slice(0, 50).map(ev => `
+              <div class="log-row">
+                <div class="log-icon">${ev.kind === "Helicopter" ? "🚁" : "⚙️"}</div>
+                <div class="log-body">
+                  <div class="log-label">${ev.itemLabel}</div>
+                  <div class="log-desc">${ev.desc || ""}</div>
+                  <div class="log-meta">${formatDate(ev.at)} · ${ev.by || "System"}</div>
+                </div>
+              </div>`).join("")}
+        </div>`;
+    }
+
+    function formatDate(ts) {
+      if (!ts) return "—";
+      const d = ts.toDate ? ts.toDate() : new Date(ts.seconds * 1000);
+      return d.toLocaleDateString("tr-TR") + " " + d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+    }
+
+    // ─── FILTERS ──────────────────────────────────────────────────────────────────
+    window.setFilter = (field, val, view) => {
+      if (field === "base") filterBase = val;
+      if (field === "type") filterType = val;
+      if (field === "status") filterStatus = val;
+      renderView();
+    };
+
+    // ─── HELICOPTER FORM ──────────────────────────────────────────────────────────
+    window.openHeliForm = (id) => {
+      editingId = id || null;
+      const h = id ? helicopters.find(x => x.id === id) : {};
+      showModal(`
+        <div class="modal-title">${id ? "EDIT HELICOPTER" : "ADD HELICOPTER"}</div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Tail Number *</label>
+            <input id="f-tail" type="text" value="${h.tailNumber||""}" placeholder="e.g. TC-HBB" />
+          </div>
+          <div class="form-group">
+            <label>Type *</label>
+            <select id="f-type">
+              ${HELI_TYPES.map(t => `<option ${h.type===t?"selected":""}>${t}</option>`).join("")}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Base *</label>
+            <select id="f-base">
+              ${BASES.map(b => `<option ${h.base===b?"selected":""}>${b}</option>`).join("")}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Status *</label>
+            <select id="f-status">
+              ${HELI_STATUSES.map(s => `<option ${h.status===s?"selected":""}>${s}</option>`).join("")}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Mission / Role</label>
+            <input id="f-mission" type="text" value="${h.mission||""}" placeholder="e.g. SAR, VIP, Fire" />
+          </div>
+          <div class="form-group full">
+            <label>Notes</label>
+            <textarea id="f-notes" rows="2">${h.notes||""}</textarea>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+          <button class="btn-primary" onclick="saveHeli()">SAVE</button>
+        </div>`);
+    };
+
+    window.saveHeli = async () => {
+      const tail = document.getElementById("f-tail").value.trim();
+      if (!tail) { alert("Tail number is required."); return; }
+      const data = {
+        tailNumber: tail,
+        type: document.getElementById("f-type").value,
+        base: document.getElementById("f-base").value,
+        status: document.getElementById("f-status").value,
+        mission: document.getElementById("f-mission").value.trim(),
+        notes: document.getElementById("f-notes").value.trim(),
+        updatedAt: serverTimestamp(),
+        updatedBy: currentUser.email
+      };
+      if (editingId) {
+        const prev = helicopters.find(h => h.id === editingId);
+        const log = prev ? buildLog(prev, data, currentUser.email) : [];
+        if (log.length) data.history = [...(prev.history||[]), ...log];
+        await updateDoc(doc(db, "helicopters", editingId), data);
+      } else {
+        data.createdAt = serverTimestamp();
+        data.history = [{ desc: "Helicopter added", at: new Date(), by: currentUser.email }];
+        await addDoc(collection(db, "helicopters"), data);
+      }
+      closeModal();
+    };
+
+    function buildLog(prev, next, user) {
+      const events = [];
+      if (prev.base !== next.base) events.push({ desc: `Transferred from ${prev.base} to ${next.base}`, at: new Date(), by: user });
+      if (prev.status !== next.status) events.push({ desc: `Status changed: ${prev.status} → ${next.status}`, at: new Date(), by: user });
+      return events;
+    }
+
+    // ─── EQUIPMENT FORM ───────────────────────────────────────────────────────────
+    window.openEquipForm = (id) => {
+      editingId = id || null;
+      const e = id ? equipment.find(x => x.id === id) : {};
+      showModal(`
+        <div class="modal-title">${id ? "EDIT EQUIPMENT" : "ADD EQUIPMENT"}</div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Equipment Name *</label>
+            <input id="f-name" type="text" value="${e.name||""}" placeholder="e.g. FLIR Camera" />
+          </div>
+          <div class="form-group">
+            <label>Category *</label>
+            <select id="f-cat">
+              ${EQUIP_CATEGORIES.map(c => `<option ${e.category===c?"selected":""}>${c}</option>`).join("")}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Serial Number</label>
+            <input id="f-sn" type="text" value="${e.serialNumber||""}" placeholder="S/N" />
+          </div>
+          <div class="form-group">
+            <label>Part Number</label>
+            <input id="f-pn" type="text" value="${e.partNumber||""}" placeholder="P/N" />
+          </div>
+          <div class="form-group">
+            <label>Base *</label>
+            <select id="f-base">
+              ${BASES.map(b => `<option ${e.base===b?"selected":""}>${b}</option>`).join("")}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Status *</label>
+            <select id="f-estatus">
+              ${EQUIP_STATUSES.map(s => `<option ${e.status===s?"selected":""}>${s}</option>`).join("")}
+            </select>
+          </div>
+          <div class="form-group full">
+            <label>Notes</label>
+            <textarea id="f-notes" rows="2">${e.notes||""}</textarea>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+          <button class="btn-primary" onclick="saveEquip()">SAVE</button>
+        </div>`);
+    };
+
+    window.saveEquip = async () => {
+      const name = document.getElementById("f-name").value.trim();
+      if (!name) { alert("Equipment name is required."); return; }
+      const data = {
+        name,
+        category: document.getElementById("f-cat").value,
+        serialNumber: document.getElementById("f-sn").value.trim(),
+        partNumber: document.getElementById("f-pn").value.trim(),
+        base: document.getElementById("f-base").value,
+        status: document.getElementById("f-estatus").value,
+        notes: document.getElementById("f-notes").value.trim(),
+        updatedAt: serverTimestamp(),
+        updatedBy: currentUser.email
+      };
+      if (editingId) {
+        const prev = equipment.find(e => e.id === editingId);
+        const log = prev ? buildLog(prev, data, currentUser.email) : [];
+        if (log.length) data.history = [...(prev.history||[]), ...log];
+        await updateDoc(doc(db, "equipment", editingId), data);
+      } else {
+        data.createdAt = serverTimestamp();
+        data.assignedTo = null;
+        data.history = [{ desc: "Equipment added to inventory", at: new Date(), by: currentUser.email }];
+        await addDoc(collection(db, "equipment"), data);
+      }
+      closeModal();
+    };
+
+    // ─── INSTALL / UNINSTALL ──────────────────────────────────────────────────────
+    window.openInstallForm = (equipId) => {
+      const e = equipment.find(x => x.id === equipId);
+      if (!e) return;
+      if (e.status === "Installed") {
+        showModal(`
+          <div class="modal-title">UNINSTALL EQUIPMENT</div>
+          <p class="modal-desc">Remove <strong>${e.name}</strong> from ${helicopters.find(h=>h.id===e.assignedTo)?.tailNumber||"aircraft"}?</p>
+          <div class="form-group">
+            <label>Move to Base</label>
+            <select id="f-unbase">
+              ${BASES.map(b => `<option ${e.base===b?"selected":""}>${b}</option>`).join("")}
+            </select>
+          </div>
+          <div class="modal-actions">
+            <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+            <button class="btn-primary" onclick="doUninstall('${equipId}')">UNINSTALL</button>
+          </div>`);
+      } else {
+        const activeHelis = helicopters.filter(h => h.status !== "Retired");
+        showModal(`
+          <div class="modal-title">INSTALL EQUIPMENT</div>
+          <p class="modal-desc">Install <strong>${e.name}</strong> onto helicopter:</p>
+          <div class="form-group">
+            <label>Select Helicopter *</label>
+            <select id="f-heli">
+              <option value="">— Select —</option>
+              ${activeHelis.map(h => `<option value="${h.id}">${h.tailNumber} · ${h.type} (${h.base})</option>`).join("")}
+            </select>
+          </div>
+          <div class="modal-actions">
+            <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+            <button class="btn-primary" onclick="doInstall('${equipId}')">INSTALL</button>
+          </div>`);
+      }
+    };
+
+    window.doInstall = async (equipId) => {
+      const heliId = document.getElementById("f-heli").value;
+      if (!heliId) { alert("Select a helicopter."); return; }
+      const e = equipment.find(x => x.id === equipId);
+      const h = helicopters.find(x => x.id === heliId);
+      const history = [...(e.history||[]), { desc: `Installed on ${h.tailNumber} at ${h.base}`, at: new Date(), by: currentUser.email }];
+      await updateDoc(doc(db, "equipment", equipId), { status: "Installed", assignedTo: heliId, base: h.base, history, updatedAt: serverTimestamp() });
+      closeModal();
+    };
+
+    window.doUninstall = async (equipId) => {
+      const base = document.getElementById("f-unbase").value;
+      const e = equipment.find(x => x.id === equipId);
+      const h = helicopters.find(x => x.id === e.assignedTo);
+      const history = [...(e.history||[]), { desc: `Uninstalled from ${h?.tailNumber||"aircraft"}, moved to ${base} inventory`, at: new Date(), by: currentUser.email }];
+      await updateDoc(doc(db, "equipment", equipId), { status: "Inventory", assignedTo: null, base, history, updatedAt: serverTimestamp() });
+      closeModal();
+    };
+
+    // ─── TRANSFER FORM ────────────────────────────────────────────────────────────
+    window.openTransferForm = (kind, id) => {
+      const item = kind === "heli" ? helicopters.find(h => h.id === id) : equipment.find(e => e.id === id);
+      showModal(`
+        <div class="modal-title">TRANSFER ${kind.toUpperCase()}</div>
+        <p class="modal-desc"><strong>${item.tailNumber||item.name}</strong> · Currently at ${item.base}</p>
+        <div class="form-group">
+          <label>Transfer to Base *</label>
+          <select id="f-newbase">
+            ${BASES.filter(b => b !== item.base).map(b => `<option>${b}</option>`).join("")}
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+          <button class="btn-primary" onclick="doTransfer('${kind}','${id}')">TRANSFER</button>
+        </div>`);
+    };
+
+    window.doTransfer = async (kind, id) => {
+      const newBase = document.getElementById("f-newbase").value;
+      const col = kind === "heli" ? "helicopters" : "equipment";
+      const item = kind === "heli" ? helicopters.find(h => h.id === id) : equipment.find(e => e.id === id);
+      const history = [...(item.history||[]), { desc: `Transferred from ${item.base} to ${newBase}`, at: new Date(), by: currentUser.email }];
+      await updateDoc(doc(db, col, id), { base: newBase, history, updatedAt: serverTimestamp() });
+      closeModal();
+    };
+
+    // ─── DELETE ───────────────────────────────────────────────────────────────────
+    window.deleteItem = async (col, id, label) => {
+      if (!confirm(`Delete "${label}"? This cannot be undone.`)) return;
+      await deleteDoc(doc(db, col, id));
+    };
+
+    // ─── MODAL ────────────────────────────────────────────────────────────────────
+    function showModal(html) {
+      document.getElementById("modal-body").innerHTML = html;
+      document.getElementById("modal-overlay").style.display = "flex";
+    }
+    window.closeModal = () => {
+      document.getElementById("modal-overlay").style.display = "none";
+    };
+
+    // ─── INIT ─────────────────────────────────────────────────────────────────────
+    window.addEventListener("DOMContentLoaded", () => {
+      document.getElementById("login-btn").addEventListener("click", doLogin);
+      document.getElementById("login-pass").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+      navigate("dashboard");
+    });
+  </script>
+
+  <style>
+    /* ── RESET & BASE ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      font-family: "Inter", sans-serif;
+      background: #070d1a;
+      color: #c8d6e8;
+      overscroll-behavior: none;
+    }
+
+    /* ── CSS VARS ─────────────────────────────────────────────── */
+    :root {
+      --bg: #070d1a;
+      --bg2: #0d1829;
+      --bg3: #111f35;
+      --border: #1e3050;
+      --accent: #1a6fff;
+      --accent2: #00c8ff;
+      --green: #00e676;
+      --amber: #ffb300;
+      --red: #ff4444;
+      --blue: #42a5f5;
+      --text: #c8d6e8;
+      --muted: #5a7399;
+      --nav-w: 220px;
+      --head: 56px;
+    }
+
+    /* ── LOGIN SCREEN ─────────────────────────────────────────── */
+    #login-screen {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      background: radial-gradient(ellipse at 50% 30%, #0a2040 0%, #070d1a 70%);
+      flex-direction: column;
+      gap: 0;
+    }
+    .login-box {
+      background: #0d1829;
+      border: 1px solid #1e3050;
+      border-radius: 16px;
+      padding: 40px 36px;
+      width: min(380px, 92vw);
+      box-shadow: 0 0 60px rgba(26,111,255,0.15);
+    }
+    .login-logo {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+    .login-logo .heli-icon {
+      font-size: 48px;
+      display: block;
+      margin-bottom: 12px;
+      filter: drop-shadow(0 0 12px rgba(0,200,255,0.5));
+    }
+    .login-logo .brand {
+      font-family: "Rajdhani", sans-serif;
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 4px;
+      color: #fff;
+    }
+    .login-logo .brand span { color: var(--accent2); }
+    .login-logo .tagline { font-size: 11px; color: var(--muted); letter-spacing: 2px; margin-top: 4px; }
+    .login-box label { display: block; font-size: 11px; letter-spacing: 1.5px; color: var(--muted); margin-bottom: 6px; margin-top: 18px; }
+    .login-box input {
+      width: 100%;
+      background: #070d1a;
+      border: 1px solid #1e3050;
+      border-radius: 8px;
+      color: #fff;
+      padding: 12px 14px;
+      font-size: 15px;
+      outline: none;
+      transition: border-color .2s;
+    }
+    .login-box input:focus { border-color: var(--accent2); }
+    #login-btn {
+      width: 100%;
+      margin-top: 24px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 14px;
+      font-family: "Rajdhani", sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      cursor: pointer;
+      transition: background .2s, transform .1s;
+    }
+    #login-btn:hover { background: #1a6fff; }
+    #login-btn:active { transform: scale(.98); }
+    #login-error { color: var(--red); font-size: 12px; margin-top: 10px; min-height: 18px; text-align: center; }
+
+    /* ── APP SHELL ────────────────────────────────────────────── */
+    #app-screen {
+      display: none;
+      height: 100vh;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Header */
+    .app-header {
+      height: var(--head);
+      background: #0a1220;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 12px;
+      flex-shrink: 0;
+      z-index: 10;
+    }
+    .burger-btn { background: none; border: none; color: var(--muted); font-size: 22px; cursor: pointer; display: none; padding: 4px 8px; }
+    .app-brand {
+      font-family: "Rajdhani", sans-serif;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      color: #fff;
+      flex: 1;
+    }
+    .app-brand span { color: var(--accent2); }
+    .header-user { display: flex; align-items: center; gap: 10px; }
+    #user-email { font-size: 12px; color: var(--muted); display: none; }
+    .logout-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 6px;
+      padding: 5px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .logout-btn:hover { border-color: var(--red); color: var(--red); }
+
+    /* Body */
+    .app-body { display: flex; flex: 1; overflow: hidden; }
+
+    /* Sidebar */
+    .sidebar {
+      width: var(--nav-w);
+      background: #0a1220;
+      border-right: 1px solid var(--border);
+      flex-shrink: 0;
+      overflow-y: auto;
+      padding: 16px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      transition: transform .3s;
+    }
+    .sidebar-section { font-size: 10px; letter-spacing: 2px; color: var(--muted); padding: 8px 20px 4px; }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 20px;
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 13px;
+      letter-spacing: 1px;
+      border-left: 3px solid transparent;
+      transition: all .15s;
+      user-select: none;
+    }
+    .nav-item:hover { background: var(--bg3); color: var(--text); }
+    .nav-item.active { border-left-color: var(--accent2); color: #fff; background: rgba(0,200,255,.05); }
+    .nav-item .nav-icon { font-size: 18px; flex-shrink: 0; }
+
+    /* Main content */
+    .main-scroll { flex: 1; overflow-y: auto; background: var(--bg); padding: 20px; }
+    .main-scroll::-webkit-scrollbar { width: 4px; }
+    .main-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    /* ── COMPONENTS ───────────────────────────────────────────── */
+    .page-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .page-title {
+      font-family: "Rajdhani", sans-serif;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      color: #fff;
+    }
+    .page-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 18px;
+      font-family: "Rajdhani", sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .btn-primary:hover { background: #2979ff; }
+    .btn-secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 18px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .btn-secondary:hover { border-color: var(--accent2); color: var(--accent2); }
+    .btn-sm {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .btn-sm:hover { border-color: var(--accent2); color: var(--accent2); }
+    .btn-sm.danger:hover { border-color: var(--red); color: var(--red); }
+
+    .card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .card-title {
+      font-family: "Rajdhani", sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 2px;
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+
+    /* Dashboard stats */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .stat-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      border-left: 3px solid var(--border);
+    }
+    .stat-card.accent-green { border-left-color: var(--green); }
+    .stat-card.accent-blue { border-left-color: var(--blue); }
+    .stat-card.accent-amber { border-left-color: var(--amber); }
+    .stat-card.accent-red { border-left-color: var(--red); }
+    .stat-icon { font-size: 22px; margin-bottom: 8px; }
+    .stat-num { font-family: "Rajdhani", sans-serif; font-size: 36px; font-weight: 700; color: #fff; line-height: 1; }
+    .stat-label { font-size: 12px; color: var(--muted); margin: 4px 0 2px; letter-spacing: 1px; }
+    .stat-sub { font-size: 11px; color: var(--muted); }
+
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+
+    /* Base bars */
+    .base-bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .base-bar-label { font-size: 12px; width: 110px; flex-shrink: 0; }
+    .base-bar-label.hq { color: var(--accent2); font-weight: 600; }
+    .base-bar-track { flex: 1; background: var(--bg3); border-radius: 4px; height: 6px; overflow: hidden; }
+    .base-bar-fill { height: 100%; background: var(--accent); border-radius: 4px; min-width: 2px; }
+    .base-bar-nums { font-size: 11px; color: var(--muted); width: 60px; text-align: right; flex-shrink: 0; }
+
+    /* Fleet */
+    .fleet-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+    .fleet-row:last-child { border-bottom: none; }
+    .fleet-row.muted { color: var(--muted); }
+    .fleet-badges { display: flex; gap: 6px; }
+
+    /* Equip categories */
+    .equip-cat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .equip-cat-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 10px; padding: 14px; text-align: center; }
+    .equip-cat-icon { font-size: 28px; margin-bottom: 6px; }
+    .equip-cat-name { font-size: 11px; color: var(--muted); margin-bottom: 8px; letter-spacing: .5px; }
+    .equip-cat-stats { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
+
+    /* Badges */
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 20px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+    .badge.green { background: rgba(0,230,118,.15); color: var(--green); border: 1px solid rgba(0,230,118,.3); }
+    .badge.blue { background: rgba(66,165,245,.15); color: var(--blue); border: 1px solid rgba(66,165,245,.3); }
+    .badge.amber { background: rgba(255,179,0,.15); color: var(--amber); border: 1px solid rgba(255,179,0,.3); }
+    .badge.red { background: rgba(255,68,68,.15); color: var(--red); border: 1px solid rgba(255,68,68,.3); }
+    .badge.gray { background: rgba(90,115,153,.15); color: var(--muted); border: 1px solid rgba(90,115,153,.3); }
+    .badge.sm { padding: 2px 6px; font-size: 10px; }
+
+    /* Filters */
+    .filters { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .filters select {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      outline: none;
+    }
+    .count-bar { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+
+    /* Item cards */
+    .item-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+    .item-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 16px; transition: border-color .2s; }
+    .item-card:hover { border-color: #2a4060; }
+    .item-card-top { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+    .item-card-icon { font-size: 28px; flex-shrink: 0; }
+    .item-card-info { flex: 1; min-width: 0; }
+    .item-card-title { font-family: "Rajdhani", sans-serif; font-size: 18px; font-weight: 700; color: #fff; }
+    .item-card-sub { font-size: 12px; color: var(--muted); }
+    .item-card-meta { margin-bottom: 10px; }
+    .meta-row { display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; border-bottom: 1px solid #0d1829; }
+    .meta-row:last-child { border-bottom: none; }
+    .meta-label { color: var(--muted); }
+    .meta-row.notes { color: var(--muted); font-style: italic; display: block; }
+    .item-card-equip-list { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; min-height: 24px; }
+    .equip-pill { background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 2px 8px; font-size: 11px; color: var(--muted); }
+    .equip-pill.more { color: var(--accent2); border-color: rgba(0,200,255,.3); }
+    .item-card-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    /* Bases */
+    .bases-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+    .base-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+    .hq-card { border-color: rgba(0,200,255,.4); background: rgba(0,200,255,.03); }
+    .base-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+    .base-card-name { font-family: "Rajdhani", sans-serif; font-size: 18px; font-weight: 700; color: #fff; }
+    .hq-badge { font-size: 10px; color: var(--accent2); border: 1px solid rgba(0,200,255,.4); border-radius: 20px; padding: 2px 8px; letter-spacing: 1px; }
+    .base-stats-row { display: flex; gap: 0; margin-bottom: 14px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .base-stat { flex: 1; padding: 10px; text-align: center; border-right: 1px solid var(--border); }
+    .base-stat:last-child { border-right: none; }
+    .base-stat-num { font-family: "Rajdhani", sans-serif; font-size: 22px; font-weight: 700; color: #fff; }
+    .green-num { color: var(--green); }
+    .base-stat-lbl { font-size: 10px; color: var(--muted); }
+    .base-heli-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+    .base-heli-row:last-child { border-bottom: none; }
+    .muted-sm { color: var(--muted); font-size: 11px; }
+
+    /* Log */
+    .log-row { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+    .log-row:last-child { border-bottom: none; }
+    .log-icon { font-size: 20px; flex-shrink: 0; width: 28px; text-align: center; }
+    .log-label { font-size: 13px; font-weight: 500; color: #fff; }
+    .log-desc { font-size: 12px; color: var(--text); margin: 2px 0; }
+    .log-meta { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--muted); }
+
+    /* Empty state */
+    .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); font-size: 14px; line-height: 1.8; }
+
+    /* ── MODAL ────────────────────────────────────────────────── */
+    #modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.7);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal-box {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      width: min(480px, 100%);
+      max-height: 90vh;
+      overflow-y: auto;
+      padding: 24px;
+    }
+    .modal-title {
+      font-family: "Rajdhani", sans-serif;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: #fff;
+      margin-bottom: 16px;
+    }
+    .modal-desc { font-size: 13px; color: var(--text); margin-bottom: 16px; }
+    .modal-desc strong { color: var(--accent2); }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+
+    /* Forms */
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-group.full { grid-column: 1 / -1; }
+    .form-group label { font-size: 11px; letter-spacing: 1.5px; color: var(--muted); }
+    .form-group input, .form-group select, .form-group textarea {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: #fff;
+      padding: 10px 12px;
+      font-size: 14px;
+      outline: none;
+      font-family: "Inter", sans-serif;
+      transition: border-color .2s;
+      width: 100%;
+    }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: var(--accent2); }
+    .form-group textarea { resize: vertical; }
+
+    /* ── MOBILE ───────────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      :root { --nav-w: 240px; }
+      #user-email { display: none; }
+      .burger-btn { display: block; }
+      .sidebar {
+        position: fixed;
+        top: var(--head);
+        left: 0;
+        bottom: 0;
+        z-index: 50;
+        transform: translateX(-100%);
+      }
+      .sidebar.open { transform: translateX(0); box-shadow: 4px 0 24px rgba(0,0,0,.5); }
+      .sidebar-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 49; display: none; }
+      .sidebar-overlay.open { display: block; }
+      .two-col { grid-template-columns: 1fr; }
+      .equip-cat-grid { grid-template-columns: repeat(2,1fr); }
+      .form-grid { grid-template-columns: 1fr; }
+      .form-group.full { grid-column: 1; }
+      .item-grid { grid-template-columns: 1fr; }
+      .bases-grid { grid-template-columns: 1fr; }
+      .stats-grid { grid-template-columns: repeat(2,1fr); }
+    }
+
+    @media (max-width: 400px) {
+      .stats-grid { grid-template-columns: 1fr; }
+    }
+
+    /* Scrollbar hiding for mobile feel */
+    .main-scroll { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  </style>
+</head>
+<body>
+
+<!-- ── LOGIN SCREEN ─────────────────────────────────────── -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">
+      <span class="heli-icon">🚁</span>
+      <div class="brand">Heli<span>IMS</span></div>
+      <div class="tagline">INVENTORY MANAGEMENT SYSTEM</div>
+    </div>
+    <label for="login-email">EMAIL</label>
+    <input id="login-email" type="email" placeholder="operator@base.gov.tr" autocomplete="email" />
+    <label for="login-pass">PASSWORD</label>
+    <input id="login-pass" type="password" placeholder="••••••••" autocomplete="current-password" />
+    <button id="login-btn">LOGIN</button>
+    <div id="login-error"></div>
+  </div>
+</div>
+
+<!-- ── APP SCREEN ───────────────────────────────────────── -->
+<div id="app-screen">
+
+  <!-- Header -->
+  <header class="app-header">
+    <button class="burger-btn" onclick="toggleSidebar()">☰</button>
+    <div class="app-brand">Heli<span>IMS</span></div>
+    <div class="header-user">
+      <span id="user-email"></span>
+      <button class="logout-btn" onclick="doLogout()">Logout</button>
+    </div>
+  </header>
+
+  <div class="app-body">
+    <!-- Sidebar overlay (mobile) -->
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
+
+    <!-- Sidebar -->
+    <nav class="sidebar" id="sidebar">
+      <div class="sidebar-section">MAIN</div>
+      <div class="nav-item active" data-view="dashboard" onclick="navigate('dashboard'); closeSidebar()">
+        <span class="nav-icon">📊</span> Dashboard
+      </div>
+      <div class="sidebar-section">FLEET</div>
+      <div class="nav-item" data-view="helicopters" onclick="navigate('helicopters'); closeSidebar()">
+        <span class="nav-icon">🚁</span> Helicopters
+      </div>
+      <div class="nav-item" data-view="equipment" onclick="navigate('equipment'); closeSidebar()">
+        <span class="nav-icon">⚙️</span> Equipment
+      </div>
+      <div class="sidebar-section">OPERATIONS</div>
+      <div class="nav-item" data-view="bases" onclick="navigate('bases'); closeSidebar()">
+        <span class="nav-icon">🏛️</span> Bases
+      </div>
+      <div class="nav-item" data-view="transfers" onclick="navigate('transfers'); closeSidebar()">
+        <span class="nav-icon">📋</span> Movement Log
+      </div>
+    </nav>
+
+    <!-- Main -->
+    <main class="main-scroll" id="main-content"></main>
+  </div>
+</div>
+
+<!-- ── MODAL ────────────────────────────────────────────── -->
+<div id="modal-overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal-box" id="modal-body"></div>
+</div>
+
+<script>
+  function toggleSidebar() {
+    document.getElementById("sidebar").classList.toggle("open");
+    document.getElementById("sidebar-overlay").classList.toggle("open");
+  }
+  function closeSidebar() {
+    document.getElementById("sidebar").classList.remove("open");
+    document.getElementById("sidebar-overlay").classList.remove("open");
+  }
+</script>
+
+</body>
+</html>
