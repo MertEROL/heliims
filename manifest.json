@@ -1,0 +1,26 @@
+{
+  "name": "HeliIMS - Helicopter Inventory Management",
+  "short_name": "HeliIMS",
+  "description": "Helicopter and equipment inventory management system for multi-base operations",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "background_color": "#070d1a",
+  "theme_color": "#0a1628",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "utilities"],
+  "lang": "tr"
+}
