@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Helikopter Envanter ve Takip Sistemi (HETS)</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+
+  <!-- LOADING SPINNER -->
+  <div id="app-loading" class="fullscreen-overlay">
+    <div class="spinner-container">
+      <div class="spinner"></div>
+      <p>Sistem Yükleniyor...</p>
+    </div>
+  </div>
+
+  <!-- LOGIN SCREEN -->
+  <div id="login-screen" class="login-wrapper hidden">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="logo-badge">
+          <i data-lucide="shield-alert" class="logo-icon animate-pulse"></i>
+        </div>
+        <h1>HETS</h1>
+        <p>Helikopter Envanter ve Takip Sistemi</p>
+      </div>
+      <form id="login-form">
+        <div class="form-group">
+          <label for="login-sicil"><i data-lucide="user"></i> Sicil Numarası</label>
+          <input type="text" id="login-sicil" placeholder="Örn: 123456" required autocomplete="username">
+        </div>
+        <div class="form-group">
+          <label for="login-password"><i data-lucide="key-round"></i> Şifre</label>
+          <input type="password" id="login-password" placeholder="••••••" required autocomplete="current-password">
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">
+          <span>Giriş Yap</span>
+          <i data-lucide="log-in"></i>
+        </button>
+      </form>
+      <div id="login-error" class="alert alert-danger hidden">
+        <i data-lucide="alert-circle"></i>
+        <span class="error-text">Hatalı Sicil veya Şifre!</span>
+      </div>
+      <div class="login-footer">
+        <p>Güvenlik Politikası Uyarınca Tüm İşlemler Loglanmaktadır.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN APP WRAPPER -->
+  <div id="main-app" class="app-layout hidden">
+    
+    <!-- SIDEBAR NAVIGATION -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand">
+          <i data-lucide="shield" class="brand-icon"></i>
+          <span>HETS</span>
+        </div>
+      </div>
+      <nav class="sidebar-menu">
+        <a href="#" class="nav-item active" data-target="section-dashboard">
+          <i data-lucide="layout-dashboard"></i>
+          <span>Filolar Genel Durumu</span>
+        </a>
+        <a href="#" class="nav-item" data-target="section-helicopters">
+          <i data-lucide="plane"></i>
+          <span>Helikopterler</span>
+        </a>
+        <a href="#" class="nav-item" data-target="section-equipment">
+          <i data-lucide="wrench"></i>
+          <span>Depo & Ekipmanlar</span>
+        </a>
+        <a href="#" class="nav-item" data-target="section-inventory">
+          <i data-lucide="clipboard-list"></i>
+          <span>Envanter Filtreleri</span>
+        </a>
+        <a href="#" class="nav-item" data-target="section-logs">
+          <i data-lucide="history"></i>
+          <span>İşlem Geçmişi</span>
+        </a>
+        <a href="#" class="nav-item admin-only hidden" id="nav-admin" data-target="section-admin">
+          <i data-lucide="users"></i>
+          <span>Kullanıcı Yönetimi</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="user-profile">
+          <div class="avatar">
+            <span id="user-avatar-text">U</span>
+          </div>
+          <div class="user-info">
+            <span id="user-display-name" class="user-name">Yükleniyor...</span>
+            <span id="user-role-badge" class="badge">Rol</span>
+          </div>
+        </div>
+        <button id="logout-btn" class="btn btn-icon btn-logout" title="Çıkış Yap">
+          <i data-lucide="log-out"></i>
+        </button>
+      </div>
+    </aside>
+
+    <!-- CONTENT AREA -->
+    <main class="content-container">
+      
+      <!-- TOP STATUS BAR / HEADER -->
+      <header class="content-header">
+        <div class="header-title">
+          <h2 id="current-section-title">Filolar Genel Durumu</h2>
+        </div>
+        <div class="header-actions">
+          <div class="system-time">
+            <i data-lucide="clock"></i>
+            <span id="live-clock">--:--:--</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- CONTENT BODY -->
+      <div class="content-body">
+
+        <!-- SECTION: DASHBOARD -->
+        <section id="section-dashboard" class="app-section">
+          <div class="dashboard-grid">
+            <!-- Summary Stats -->
+            <div class="stats-row">
+              <div class="stat-card">
+                <div class="stat-icon bg-primary-soft">
+                  <i data-lucide="plane"></i>
+                </div>
+                <div class="stat-content">
+                  <span class="stat-label">Toplam Helikopter</span>
+                  <span id="stat-total-helicopters" class="stat-val">0</span>
+                </div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-icon bg-success-soft">
+                  <i data-lucide="check-circle-2"></i>
+                </div>
+                <div class="stat-content">
+                  <span class="stat-label">Faal Helikopterler</span>
+                  <span id="stat-active-helicopters" class="stat-val">0</span>
+                </div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-icon bg-warning-soft">
+                  <i data-lucide="wrench"></i>
+                </div>
+                <div class="stat-content">
+                  <span class="stat-label">Toplam Ekipman</span>
+                  <span id="stat-total-equipments" class="stat-val">0</span>
+                </div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-icon bg-info-soft">
+                  <i data-lucide="help-circle"></i>
+                </div>
+                <div class="stat-content">
+                  <span class="stat-label">Onarımda Olanlar</span>
+                  <span id="stat-in-repair" class="stat-val">0</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Fleet Status Grid -->
+            <h3>Filoların Durumu</h3>
+            <div id="fleet-list-container" class="fleet-grid">
+              <!-- Fleet cards will be dynamically rendered here -->
+            </div>
+          </div>
+        </section>
+
+        <!-- SECTION: HELICOPTERS -->
+        <section id="section-helicopters" class="app-section hidden">
+          <div class="section-actions">
+            <div class="search-box">
+              <i data-lucide="search"></i>
+              <input type="text" id="search-helicopters" placeholder="Kuyruk no veya model ara...">
+            </div>
+            <button class="btn btn-primary" id="btn-add-helicopter">
+              <i data-lucide="plus"></i>
+              <span>Yeni Helikopter Ekle</span>
+            </button>
+          </div>
+          <div id="helicopter-list-container" class="grid-list">
+            <!-- Helicopters will be dynamically rendered here -->
+          </div>
+        </section>
+
+        <!-- SECTION: EQUIPMENTS -->
+        <section id="section-equipment" class="app-section hidden">
+          <div class="section-actions">
+            <div class="search-box">
+              <i data-lucide="search"></i>
+              <input type="text" id="search-equipment" placeholder="Seri no, isim veya model ara...">
+            </div>
+            <div class="filter-group">
+              <select id="filter-equipment-status">
+                <option value="all">Tüm Durumlar</option>
+                <option value="faal">Faal</option>
+                <option value="gayri_faal">Gayri Faal</option>
+                <option value="onarimda">Onarımda</option>
+              </select>
+              <select id="filter-equipment-location">
+                <option value="all">Tüm Konumlar</option>
+                <option value="depo">Depoda</option>
+                <option value="helicopter">Helikopter Üzerinde</option>
+              </select>
+            </div>
+            <button class="btn btn-primary" id="btn-add-equipment">
+              <i data-lucide="plus"></i>
+              <span>Yeni Ekipman Ekle</span>
+            </button>
+          </div>
+          <div id="equipment-list-container" class="grid-list">
+            <!-- Equipments will be dynamically rendered here -->
+          </div>
+        </section>
+
+        <!-- SECTION: INVENTORY -->
+        <section id="section-inventory" class="app-section hidden">
+          <div class="inventory-controls">
+            <div class="tab-filters">
+              <button class="tab-btn active" data-filter="all">Tüm Envanter</button>
+              <button class="tab-btn" data-filter="kullanimda">Kullanımda</button>
+              <button class="tab-btn" data-filter="depoda">Depoda</button>
+              <button class="tab-btn" data-filter="onarimda">Onarımda</button>
+            </div>
+            <div class="search-box">
+              <i data-lucide="search"></i>
+              <input type="text" id="search-inventory-input" placeholder="Envanterde ara...">
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Seri No</th>
+                  <th>Ekipman Adı</th>
+                  <th>Model</th>
+                  <th>Durum</th>
+                  <th>Bulunduğu Konum / Helikopter</th>
+                  <th>Son Güncelleme</th>
+                  <th>Açıklama</th>
+                  <th>İşlemler</th>
+                </tr>
+              </thead>
+              <tbody id="inventory-table-body">
+                <!-- Inventory rows will be dynamically rendered here -->
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- SECTION: AUDIT LOGS -->
+        <section id="section-logs" class="app-section hidden">
+          <div class="section-actions">
+            <div class="search-box">
+              <i data-lucide="search"></i>
+              <input type="text" id="search-logs-input" placeholder="Loglarda ara (Kullanıcı, Helikopter vb)...">
+            </div>
+            <select id="filter-logs-action">
+              <option value="all">Tüm İşlemler</option>
+              <option value="CREATE">Yeni Kayıt</option>
+              <option value="UPDATE">Güncelleme</option>
+              <option value="MOUNT">Ekipman Montaj</option>
+              <option value="UNMOUNT">Ekipman Demontaj</option>
+            </select>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Tarih / Saat</th>
+                  <th>Kullanıcı (Sicil)</th>
+                  <th>İşlem Tipi</th>
+                  <th>Detay</th>
+                  <th>Açıklama / Gerekçe</th>
+                </tr>
+              </thead>
+              <tbody id="logs-table-body">
+                <!-- Logs will be dynamically rendered here -->
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- SECTION: ADMIN PANEL -->
+        <section id="section-admin" class="app-section hidden">
+          <div class="admin-grid">
+            <div class="card card-form">
+              <h3><i data-lucide="user-plus"></i> Yeni Kullanıcı Ekle</h3>
+              <form id="add-user-form">
+                <div class="form-group">
+                  <label for="admin-new-sicil">Sicil Numarası</label>
+                  <input type="text" id="admin-new-sicil" placeholder="Örn: 123456" required autocomplete="off">
+                </div>
+                <div class="form-group">
+                  <label for="admin-new-name">Kullanıcı Adı Soyadı</label>
+                  <input type="text" id="admin-new-name" placeholder="Örn: Ahmet Yılmaz" required autocomplete="off">
+                </div>
+                <div class="form-group">
+                  <label for="admin-new-role">Yetki Rolü</label>
+                  <select id="admin-new-role" required>
+                    <option value="user">Teknisyen / Kullanıcı</option>
+                    <option value="admin">Yönetici / Admin</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="admin-new-password">Başlangıç Şifresi</label>
+                  <input type="password" id="admin-new-password" placeholder="En az 6 karakter" required autocomplete="new-password">
+                </div>
+                <button type="submit" class="btn btn-primary">
+                  <i data-lucide="check"></i>
+                  <span>Kullanıcıyı Kaydet</span>
+                </button>
+              </form>
+              <div id="admin-user-status" class="alert hidden"></div>
+            </div>
+
+            <div class="card card-table">
+              <h3><i data-lucide="users"></i> Sistemdeki Kullanıcılar</h3>
+              <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Sicil</th>
+                      <th>Adı Soyadı</th>
+                      <th>Rol</th>
+                      <th>Kayıt Tarihi</th>
+                    </tr>
+                  </thead>
+                  <tbody id="admin-users-table-body">
+                    <!-- Users list will be dynamically rendered here -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- MODAL: ADD HELICOPTER -->
+  <div id="modal-add-helicopter" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i data-lucide="plane"></i> Yeni Helikopter Ekle</h3>
+        <button class="btn-close-modal"><i data-lucide="x"></i></button>
+      </div>
+      <form id="add-helicopter-form">
+        <div class="form-group">
+          <label for="heli-tail-no">Kuyruk Numarası</label>
+          <input type="text" id="heli-tail-no" placeholder="Örn: EM-101" required autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label for="heli-model">Helikopter Modeli</label>
+          <select id="heli-model" required>
+            <option value="">Seçiniz...</option>
+            <option value="Bell-429">Bell-429</option>
+            <option value="Atak-129">Atak-129</option>
+            <option value="Gökbey">Gökbey</option>
+            <option value="Sikorsky S70-A">Sikorsky S70-A</option>
+            <option value="Sikorsky S70-İ">Sikorsky S70-İ</option>
+            <option value="Sikorsky S70-T">Sikorsky S70-T</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="heli-fleet">Bulunduğu Filo</label>
+          <select id="heli-fleet" required>
+            <option value="">Seçiniz...</option>
+            <option value="Ankara">Ankara (Başkanlık)</option>
+            <option value="İstanbul">İstanbul</option>
+            <option value="İzmir">İzmir</option>
+            <option value="Adana">Adana</option>
+            <option value="Antalya">Antalya</option>
+            <option value="Diyarbakır">Diyarbakır</option>
+            <option value="Van">Van</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="heli-notes">Genel Notlar / Açıklama</label>
+          <textarea id="heli-notes" rows="3" placeholder="Helikopter durumu hakkında ek notlar..."></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-close-modal">Vazgeç</button>
+          <button type="submit" class="btn btn-primary">Kaydet</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: ADD EQUIPMENT -->
+  <div id="modal-add-equipment" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i data-lucide="wrench"></i> Yeni Ekipman Ekle</h3>
+        <button class="btn-close-modal"><i data-lucide="x"></i></button>
+      </div>
+      <form id="add-equipment-form">
+        <div class="form-group">
+          <label for="equip-serial-no">Seri Numarası</label>
+          <input type="text" id="equip-serial-no" placeholder="Örn: FL-9087" required autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label for="equip-name">Ekipman Adı / Türü</label>
+          <input type="text" id="equip-name" placeholder="Örn: FLIR Kamera, Telsiz, Radar" required list="equip-suggestions" autocomplete="off">
+          <datalist id="equip-suggestions">
+            <option value="FLIR Termal Kamera">
+            <option value="ESM Radar Alıcısı">
+            <option value="HF/UHF Telsiz Cihazı">
+            <option value="Arama Kurtarma Vinci">
+            <option value="Engel Tespit Radarı">
+            <option value="Hassas Navigasyon Sistemi">
+          </datalist>
+        </div>
+        <div class="form-group">
+          <label for="equip-model">Ekipman Modeli</label>
+          <input type="text" id="equip-model" placeholder="Örn: Star SAFIRE III, MX-15D" required autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label for="equip-status">İlk Durum</label>
+          <select id="equip-status" required>
+            <option value="faal">Faal</option>
+            <option value="gayri_faal">Gayri Faal</option>
+            <option value="onarimda">Onarımda</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="equip-fleet">Bulunduğu Filo Deposu</label>
+          <select id="equip-fleet" required>
+            <option value="">Seçiniz...</option>
+            <option value="Ankara">Ankara (Başkanlık)</option>
+            <option value="İstanbul">İstanbul</option>
+            <option value="İzmir">İzmir</option>
+            <option value="Adana">Adana</option>
+            <option value="Antalya">Antalya</option>
+            <option value="Diyarbakır">Diyarbakır</option>
+            <option value="Van">Van</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="equip-notes">Genel Notlar / Açıklama</label>
+          <textarea id="equip-notes" rows="3" placeholder="Ekipman özellikleri veya bakım notları..."></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-close-modal">Vazgeç</button>
+          <button type="submit" class="btn btn-primary">Kaydet</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: MANAGE HELICOPTER EQUIPMENT -->
+  <div id="modal-manage-heli-equip" class="modal-overlay hidden">
+    <div class="modal-card modal-lg">
+      <div class="modal-header">
+        <div>
+          <h3 id="manage-heli-title">Helikopter Ekipman Yönetimi</h3>
+          <p id="manage-heli-subtitle" class="text-secondary">EM-101 | Bell-429</p>
+        </div>
+        <button class="btn-close-modal"><i data-lucide="x"></i></button>
+      </div>
+      
+      <div class="manage-equip-layout">
+        <!-- Currently Mounted Equipment -->
+        <div class="manage-equip-section">
+          <h4><i data-lucide="check-square" class="text-success"></i> Üzerindeki Ekipmanlar</h4>
+          <div id="mounted-equip-list" class="list-group">
+            <!-- Mounted items will be rendered here -->
+          </div>
+        </div>
+
+        <!-- Available Equipment in Fleet Warehouse -->
+        <div class="manage-equip-section">
+          <h4><i data-lucide="plus-circle" class="text-primary"></i> Filo Deposundaki Faal Ekipmanlar</h4>
+          <div id="available-equip-list" class="list-group">
+            <!-- Available items will be rendered here -->
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group margin-top-md">
+        <label for="manage-equip-comment"><strong class="text-warning">*</strong> İşlem Açıklaması / Gerekçesi</label>
+        <input type="text" id="manage-equip-comment" placeholder="Örn: FLIR bakımı yapıldıktan sonra helikoptere monte edildi." required class="input-block">
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-close-modal">Kapat</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: EDIT EQUIPMENT STATUS / INFO -->
+  <div id="modal-edit-equipment" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h3><i data-lucide="edit-3"></i> Ekipman Durumu Düzenle</h3>
+          <p id="edit-equip-title" class="text-secondary">FL-9087 | FLIR</p>
+        </div>
+        <button class="btn-close-modal"><i data-lucide="x"></i></button>
+      </div>
+      <form id="edit-equipment-form">
+        <input type="hidden" id="edit-equip-id">
+        <div class="form-group">
+          <label for="edit-equip-status">Güncel Durum</label>
+          <select id="edit-equip-status" required>
+            <option value="faal">Faal</option>
+            <option value="gayri_faal">Gayri Faal</option>
+            <option value="onarimda">Onarımda</option>
+          </select>
+        </div>
+        <div class="form-group" id="edit-equip-relocate-group">
+          <label for="edit-equip-fleet">Bulunduğu Depo Konumu</label>
+          <select id="edit-equip-fleet">
+            <option value="Ankara">Ankara (Başkanlık)</option>
+            <option value="İstanbul">İstanbul</option>
+            <option value="İzmir">İzmir</option>
+            <option value="Adana">Adana</option>
+            <option value="Antalya">Antalya</option>
+            <option value="Diyarbakır">Diyarbakır</option>
+            <option value="Van">Van</option>
+          </select>
+          <small class="text-secondary" id="edit-equip-mounted-info" style="display:none;"></small>
+        </div>
+        <div class="form-group">
+          <label for="edit-equip-notes">Durum Değişiklik Notu</label>
+          <textarea id="edit-equip-notes" rows="2" placeholder="Bakım raporu, arıza detayı vb. giriniz..."></textarea>
+        </div>
+        <div class="form-group">
+          <label for="edit-equip-comment"><strong class="text-warning">*</strong> İşlem Açıklaması / Gerekçesi</label>
+          <input type="text" id="edit-equip-comment" placeholder="Örn: Arıza tespiti sebebiyle onarıma sevk edildi." required>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-close-modal">Vazgeç</button>
+          <button type="submit" class="btn btn-primary">Durumu Güncelle</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Main Application Script (ESM) -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>
